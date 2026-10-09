@@ -151,7 +151,6 @@ def run_ragas_eval(rag_results: list, version: str) -> dict:
         metrics=[faithfulness, answer_relevancy, context_recall, context_precision],
         llm=llm_eval,
         embeddings=emb_eval,
-        max_workers=4,
     )
 
     scores = {}
