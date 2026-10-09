@@ -62,8 +62,50 @@ def build_vectorstore(chunks: list, embeddings):
         FAISS vectorstore đã được index và sẵn sàng dùng để retrieve
     """
     from langchain_community.vectorstores import FAISS
+    import time
+    from pathlib import Path
+
+    index_dir = Path(__file__).parent.parent.parent / "faiss_index"
+    if index_dir.exists():
+        print(f"⚡ Đã tìm thấy FAISS index tại {index_dir}, đang nạp trực tiếp...")
+        try:
+            return FAISS.load_local(str(index_dir), embeddings, allow_dangerous_deserialization=True)
+        except Exception as e:
+            print(f"⚠️  Không nạp được index cũ: {e}, đang tạo lại...")
 
     print(f"🔨 Đang tạo FAISS index từ {len(chunks)} chunks ...")
-    vectorstore = FAISS.from_texts(chunks, embeddings)
+
+    def _add_with_retry(vs, batch_chunks):
+        for attempt in range(10):
+            try:
+                if vs is None:
+                    return FAISS.from_texts(batch_chunks, embeddings)
+                else:
+                    vs.add_texts(batch_chunks)
+                    return vs
+            except Exception as e:
+                if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                    print(f"  ⏳ Chạm rate limit Gemini, tạm dừng 30s (thử {attempt+1}/10)...")
+                    time.sleep(30)
+                else:
+                    raise e
+        raise RuntimeError("Vượt quá số lần thử tạo VectorStore")
+
+    batch_size = 10
+    vectorstore = None
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        vectorstore = _add_with_retry(vectorstore, batch)
+        time.sleep(2)
+
+    if vectorstore:
+        try:
+            vectorstore.save_local(str(index_dir))
+            print(f"💾 Đã lưu FAISS index vào {index_dir}")
+        except Exception as e:
+            print(f"⚠️ Không thể lưu FAISS index: {e}")
+
     print("✅ FAISS vectorstore đã sẵn sàng.")
     return vectorstore
+
+
